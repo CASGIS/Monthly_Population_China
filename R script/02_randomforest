@@ -1,0 +1,152 @@
+# purpose     : Random forest estimation for each month
+# date        : 2019-11-24
+# prepared by : Zhifeng Cheng
+# --------------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------------
+# Initial
+# --------------------------------------------------------------------------------
+library(velox)
+library(randomForest)
+library(raster)
+library(tidyverse)
+library(sf)
+library(doParallel)
+options("encoding" = "UTF-8")
+options(scipen = 200)
+
+# --------------------------------------------------------------------------------
+# MAIN
+# --------------------------------------------------------------------------------
+# Adjuct census data
+AdjustPop <- function(x) {
+  library(sf)
+  census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/01_Census_MP_monthly.shp')
+  census$geometry <- NULL
+  for (i in 1:nrow(census)) {
+    if (length(as.numeric(census[i, 8:19])[as.numeric(census[i, 8:19]) <= 100]) > 3) {
+      census$PopAdjusted[i] <- census$Pop[i]
+      next()
+    }
+    if (length(as.numeric(census[i, 8:19])[as.numeric(census[i, 8:19]) <= 100]) > 0 & census[i, x+6] <= 100) {
+      census$PopAdjusted[i] <- census$Pop[i]
+      next()
+    }
+    census$PopAdjusted[i] <- as.integer((census[i, x+6] / sum(census[, x+6])) / (census$Yearmean[i] / sum(census$Yearmean)) * census$Pop[i])
+  }
+  output <- as.data.frame(census$PopAdjusted)
+  colnames(output)[1] <- gsub('MP', 'Pop', colnames(census)[x+6])
+  return(output)
+}
+registerDoParallel(cores = 16)
+output <- foreach(i = 1:12) %dopar% AdjustPop(i)
+
+census.popadj <- bind_cols(output[[1]], output[[2]], output[[3]], output[[4]], 
+                           output[[5]], output[[6]], output[[7]], output[[8]], 
+                           output[[9]], output[[10]], output[[11]], output[[12]])
+census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/01_Census_MP_monthly.shp')
+census.popadj <- bind_cols(census, census.popadj)
+st_write(census.popadj, 'data/10_monthly_mapping/03_census_monthly_PopMP/02_Census_MP_Pop_monthly.shp')
+
+
+# Covariates preparation 
+census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/01_Census_MP_monthly.shp')
+
+dem <- raster('data/01_dem/CNdem_fixed.tif')
+slope <- raster('data/02_slope/CNslope_fixed.tif')
+cropland <- raster('data/03_landuse/landuse_10_Cropland.tif')
+forest <- raster('data/03_landuse/landuse_20_Forest.tif')
+grassland <- raster('data/03_landuse/landuse_30_Grassland.tif')
+waters <- raster('data/03_landuse/landuse_40_Waters.tif')
+urban <- raster('data/03_landuse/landuse_51_Urban.tif')
+rural <- raster('data/03_landuse/landuse_52_Rural.tif')
+otherbuilding <- raster('data/03_landuse/landuse_53_OtherBuilding.tif')
+unutilized <- raster('data/03_landuse/landuse_60_Unutilized.tif')
+nightlight <- raster('data/05_nightlight/VIIRS_2015_CHINA.tif')
+stack <- stack(dem, slope, cropland, forest, grassland, waters, urban, rural, otherbuilding, unutilized, nightlight)
+vx.stack <- velox(stack)
+extract.rs <- vx.stack$extract(sp = census, fun = mean, df = T)
+
+MPmonth01 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201701.tif')
+MPmonth02 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201702.tif')
+MPmonth03 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201703.tif')
+MPmonth04 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201704.tif')
+MPmonth05 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201705.tif')
+MPmonth06 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201706.tif')
+MPmonth07 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201707.tif')
+MPmonth08 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201708.tif')
+MPmonth09 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201709.tif')
+MPmonth10 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201710.tif')
+MPmonth11 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201711.tif')
+MPmonth12 <- raster('data/04_monthly_China_v1/rasterization/02_resample/Monthsum_201712.tif')
+stack <- stack(MPmonth01, MPmonth02, MPmonth03, MPmonth04, MPmonth05, MPmonth06, 
+               MPmonth07, MPmonth08, MPmonth09, MPmonth10, MPmonth11, MPmonth12)
+rm(MPmonth01, MPmonth02, MPmonth03, MPmonth04, MPmonth05, MPmonth06, 
+   MPmonth07, MPmonth08, MPmonth09, MPmonth10, MPmonth11, MPmonth12)
+vx.mp <- velox(stack)
+extract.mp <- vx.mp$extract(sp = census, fun = mean, df = T)
+
+colnames(extract.rs)[-1] <- c('CNdem_fixed','CNslope_fixed','landuse_10_Cropland','landuse_20_Forest',
+                              'landuse_30_Grassland','landuse_40_Waters','landuse_51_Urban','landuse_52_Rural',
+                              'landuse_53_OtherBuilding','landuse_60_Unutilized','VIIRS_2015_CHINA')
+colnames(extract.mp)[-1] <- c('Monthsum_201701', 'Monthsum_201702', 'Monthsum_201703', 'Monthsum_201704', 
+                              'Monthsum_201705', 'Monthsum_201706', 'Monthsum_201707', 'Monthsum_201708', 
+                              'Monthsum_201709', 'Monthsum_201710', 'Monthsum_201711', 'Monthsum_201712')
+
+# Excute random forest model
+census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/02_Census_MP_Pop_monthly.shp')
+list.nodynamic <- NULL
+for (i in 1:nrow(census)) {
+  if (length(as.numeric(census[i, 8:19])[as.numeric(census[i, 8:19]) <= 100]) > 3) {
+    list.nodynamic <- c(list.nodynamic, i)
+  }
+}
+
+randomforest <- function(x) {
+  library(raster)
+  library(tidyverse)
+  library(randomForest)
+  library(sf)
+  
+  census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/02_Census_MP_Pop_monthly.shp')
+  pop.column <- census[, x+19]
+  pop.column$geometry <- NULL
+  census$per <- as.numeric(pop.column[, 1] / st_area(census$geometry) * 1000000)
+  census$geometry <- NULL
+  census <- as.data.frame(census)
+  
+  MP <- raster(list.mp[x])
+  stack <- stack(dem, slope, cropland, forest, grassland, waters, urban, rural, otherbuilding, unutilized, nightlight, MP)
+  
+  cov <- cbind(census[, 32], extract.rs[, -1], extract.mp[, x+1])
+  colnames(cov)[c(1, 13)] <- c('per', as.character(substring(list.mp[x], nchar(list.mp[x])-18, nchar(list.mp[x])-4)))
+  
+  cov <- cov[-c(41092:43327), ]
+  cov <- cov[-list.nodynamic, ]
+  cov <- cov[!is.na(cov$CNslope_fixed) & 
+             !is.na(cov$landuse_10_Cropland) & 
+             !is.na(cov$VIIRS_2015_CHINA) & 
+             !is.na(cov[, 13]) & 
+             cov$per != 0, ]
+  
+  rf <- randomForest::randomForest(log(per) ~ ., 
+                                   data = cov, 
+                                   importance = T, 
+                                   ntree = 500, 
+                                   mtry = 4)
+  rf
+  predict <- predict(stack, rf)
+  predict.pop <- exp(1) ^ predict
+  saveRDS(rf, paste0('data/10_Monthly_mapping/01_RF_RDS/RF_', 
+                     as.character(substring(list.mp[x], nchar(list.mp[x])-9, nchar(list.mp[x])-4)), '.RDS'))
+  writeRaster(predict.pop,
+              paste0('data/10_Monthly_mapping/02_RF_Pop/Pop_RF_', 
+                     as.character(substring(list.mp[x], nchar(list.mp[x])-9, nchar(list.mp[x])-4)), '.tif'),
+              format = 'GTiff')
+}
+
+registerDoParallel(cores = 16)
+list.mp <- list.files('data/04_monthly_China_v1/rasterization/02_resample', full.names = T)
+foreach(i = 1:12) %dopar% randomforest(i)
+
+
