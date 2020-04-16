@@ -18,7 +18,7 @@ options(scipen = 200)
 # --------------------------------------------------------------------------------
 # MAIN
 # --------------------------------------------------------------------------------
-# Adjuct census data
+# Adjuct census data -------------------------------------------------------------
 AdjustPop <- function(x) {
   library(sf)
   census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/01_Census_MP_monthly.shp')
@@ -49,7 +49,7 @@ census.popadj <- bind_cols(census, census.popadj)
 st_write(census.popadj, 'data/10_monthly_mapping/03_census_monthly_PopMP/02_Census_MP_Pop_monthly.shp')
 
 
-# Covariates preparation 
+# Covariates preparation ----------------------------------------------------------
 census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/01_Census_MP_monthly.shp')
 
 dem <- raster('data/01_dem/CNdem_fixed.tif')
@@ -93,7 +93,7 @@ colnames(extract.mp)[-1] <- c('Monthsum_201701', 'Monthsum_201702', 'Monthsum_20
                               'Monthsum_201705', 'Monthsum_201706', 'Monthsum_201707', 'Monthsum_201708', 
                               'Monthsum_201709', 'Monthsum_201710', 'Monthsum_201711', 'Monthsum_201712')
 
-# Excute random forest model
+# Excute random forest model ----------------------------------------------------------
 census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/02_Census_MP_Pop_monthly.shp')
 list.nodynamic <- NULL
 for (i in 1:nrow(census)) {
