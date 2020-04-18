@@ -1,4 +1,4 @@
-# purpose     : Random forest estimation for each month
+# purpose     : population estimation for each month (random forest + area-to-point)
 # date        : 2019-11-24
 # prepared by : Zhifeng Cheng
 # --------------------------------------------------------------------------------
@@ -17,6 +17,9 @@ options(scipen = 200)
 
 # --------------------------------------------------------------------------------
 # MAIN
+# --------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------
+# ********************** random forest (12 months parallel) **********************
 # --------------------------------------------------------------------------------
 # Adjuct census data -------------------------------------------------------------
 AdjustPop <- function(x) {
@@ -148,5 +151,103 @@ randomforest <- function(x) {
 registerDoParallel(cores = 16)
 list.mp <- list.files('data/04_monthly_China_v1/rasterization/02_resample', full.names = T)
 foreach(i = 1:12) %dopar% randomforest(i)
+
+
+
+# --------------------------------------------------------------------------------
+# ****************** area-to-point kriging (March as example) ********************
+# --------------------------------------------------------------------------------
+# Source data preparation --------------------------------------------------------
+census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/03_Census_MP_Pop_RF_monthly_tagged.shp')
+sp.census <- as(census, 'Spatial')
+raster <- raster('data/10_monthly_mapping/02_RF_Pop/Pop_RF_201703.tif')
+point <- rasterToPoints(raster, spatial = T)
+over <- over(point, sp.census)
+over.narm <- over[!is.na(over$MergeTown), ]
+for (i in 1:nrow()) {
+  Freq <- nrow(over.narm[over.narm$MergeTown == census.part$MergeTown[i], ])
+  census$Freq[i] <- Freq
+}
+st_write(census.new, 'data/10_monthly_mapping/03_census_monthly_PopMP/03_Census_MP_Pop_RF_monthly_tagged_freq.shp',
+         layer_options = "ENCODING=UTF-8", driver = "ESRI Shapefile")
+
+census <- st_read('data/10_monthly_mapping/03_census_monthly_PopMP/03_Census_MP_Pop_RF_monthly_tagged_freq.shp')
+census$Merge <- paste0(census$City, census$County)
+census$MergeTown <- paste0(census$City, census$Name2012)
+merge <- as.character(unique(census$Merge))
+
+for (i in 1:nrow(census)) {
+  cat('Processing ->', i, '\n')
+  if(census$Freq[i] == 0) {
+    census$residual[i] <- as.numeric(census$Pop201703[i] - census$RF201703[i])
+    next()
+  }
+  census$residual[i] <- as.numeric((census$Pop201703[i] - census$RF201703[i]) / census$Freq[i])
+}
+census$residual_sum <- census$Pop201703 - census$RF201703
+census$Area <- as.numeric(st_area(census$geometry) / 1000000)
+sp.census <- as(census, 'Spatial')
+
+list.point <- readRDS('data/10_monthly_mapping/00_RDS/List_point_2.rds')
+
+# Kriging preparation ----------------------------------------------------------
+census.resi <- census[, c('MergeTown', 'Pop201703', 'RF201703', 'residual', 'residual_sum', 'census_Tag')]
+census.resi$geometry <- NULL
+cov.point <- st_read('data/09_prediction/03_A2P/02_Cov_Point.shp')
+cov.point$MergeTown <- paste0(cov.point$City, cov.point$Name2012)
+cov.point <- cov.point[, 'MergeTown']
+cov.point <- merge(cov.point, census.resi, by = 'MergeTown', all.x = T)
+sp.cov.point <- as(cov.point, 'Spatial')
+
+
+## Variogram fitting ('automap' or 'gstat')
+vgm <- automap::autofitVariogram(residual~1,
+                                 as_Spatial(cov.point),
+                                 model = c("Mat"),
+                                 kappa = c(0.05, seq(0.2, 2, 0.1), 5, 10))
+vgm <- gstat::fit.variogram(gstat::variogram(residual~1, cov.point),
+                            vgm(c("Mat")), fit.kappa = T)
+
+# Kriging -----------------------------------------------------------------------
+GstatKrige <- function(x) {
+  library(gstat)
+  library(sf)
+  library(sp)
+  output <- NULL
+  if (length(list.point[[x]]) != 0) {
+    census.county <- census[census$Merge == merge[x], ]
+    census.county <- census.county[census.county$Freq != 0, ]
+    sp.buffer <- as(st_buffer(census.county, 10000), 'Spatial')
+    sp.census.buffer <- sp.census[!is.na(over(sp.census, sp.buffer)[, 1]), ]
+    
+    vgmarea <- vgmArea(sp.census.buffer, vgm = vgm$var_model, ndiscr = 96, verbose = T)
+    
+    output <- krige0(residual~1, 
+                     sp.census.buffer, 
+                     list.point[[x]],  
+                     vgmArea, ndiscr = 96,
+                     vgm = vgm$var_model, 
+                     verbose = TRUE)
+    output <- raster(SpatialPixelsDataFrame(point, data.frame(pred = output)))
+  }
+  return(output)
+}
+
+# Parallized kriging interpolation -----------------------------------------------
+registerDoParallel(cores = 15)
+output <- foreach(i = 1:length(county)) %dopar% GstatKrige(i)
+
+
+# Merge results ------------------------------------------------------------------
+mergeParts <- do.call(merge, 
+                      foreach(i = 1:length(output)) %do% {
+                        if (length(list.point[[j]]) != 0) {
+                          raster(SpatialPixelsDataFrame(list.point[[i]], data.frame(pred = output[[i]])))
+                        }
+                      })
+writeRaster(mergeParts, 'data/10_monthly_mapping/04_A2P/A2P201703.tif')
+
+
+
 
 
