@@ -1,6 +1,6 @@
 # Data preprocessing (nightlight, landuse, MP)
 # Produced by JH Wang & ZF Cheng
-# 2018-11-13
+# 2020-04-25
 
 # ---------------------------------------------------------------
 # Initial
@@ -22,11 +22,9 @@ tocrs <- proj4string(slope)
 
 
 ## nightlight
-system("wget -r -c https://data.ngdc.noaa.gov/instruments/remote-sensing/passive/spectrometers-radiometers/imaging/viirs/dnb_composites/v10//2015/SVDNB_npp_20150101-20151231_75N060E_v10_c201701311200.tgz")
-system("tar -cvf SVDNB_npp_20150101-20151231_75N060E_v10_c201701311200.tgz")
 nightlight <- raster('data/05_nightlight/SVDNB_npp_20150101-20151231_CHINA.tif') %>%
   resample(slope, method = "bilinear")
-writeRaster(nightlight, 'data/05_nightlight/VIIRS_2015_CHINA_bilinear.tif', format = 'GTiff')
+writeRaster(nightlight, 'data/05_nightlight/VIIRS_2015_CHINA.tif', format = 'GTiff')
 
 
 ## landuse
@@ -45,21 +43,21 @@ for (i in c(10, 20, 30, 40, 50, 60, 70, 80, 90)) {
 ## MP
 boundary.latlon <- st_transform(boundary, "+proj=longlat +datum=WGS84")
 bbox.pre <- extent(boundary.latlon)
-temp <- raster(bbox.pre, resolution = 0.01, crs = "+proj=longlat +datum=WGS84")
+temp <- raster(bbox.pre, resolution = c(0.01, 0.01), crs = CRS("+proj=longlat +datum=WGS84"))
 
-list <- list.files('data/04_MP/origin/20170701/', full.names = T)
+list <- list.files('data/04_monthly_China/origin', full.names = T)
 for (i in 1:length(list)) {
   cat(as.character(Sys.time()), 'processing -> ', i, '\n')
   load(list[i])
   fddf <- fddf %>%
     dplyr::mutate(x = x / 100) %>%
     dplyr::mutate(y = y / 100) %>%
-    dplyr::filter(x >= 60.0, x <= 140.0, y >= 0, y <= 60) %>% 
+    dplyr::filter(x >= bbox.pre@xmin, x <= bbox.pre@xmax, y >= bbox.pre@ymin, y <= bbox.pre@ymax) %>% 
     st_as_sf(coords = c('x', 'y'), crs = "+proj=longlat +datum=WGS84")
-  rs <- rasterize(x = fddf, y = temp, field = "z", background = 0, fun = "sum", na.rm = TRUE) %>%
+  rs <- rasterize(x = monthsum, y = temp, field = "month_sum", background = 0, fun = "sum", na.rm = TRUE) %>%
     projectRaster(crs = tocrs) %>%
     resample(slope, method = 'ngb')
-  writeRaster(rs, filename = gsub('.Rdata', '_ngb.tif', gsub('origin', 'rasterization', list[i])), 
+  writeRaster(rs, filename = gsub('.Rdata', '.tif', gsub('origin', 'rasterization', list[i])), 
               format = 'GTiff', datatype = 'INT4U', overwrite = T)
 }
 
