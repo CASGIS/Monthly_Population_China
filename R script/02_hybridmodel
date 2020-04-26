@@ -1,4 +1,4 @@
-# purpose     : population estimation for each month (random forest + area-to-point)
+# purpose     : population estimation for each month (random forest + area-to-point kriging)
 # date        : 2020-04-25
 # prepared by : Zhifeng Cheng
 # --------------------------------------------------------------------------------
